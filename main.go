@@ -80,12 +80,21 @@ func openFile(title string, isCB bool) (io.Writer, func()) {
 
 // csv icin string type'lari quote icine alma
 func quoteVal(a any) (s string) {
-	switch s = fmt.Sprintf("%v", a); a.(type) {
-	case bool, int, int32, int64, float32, float64:
-		// numeric, no need to quote
+	switch v := a.(type) {
+	case bool:
+		s = fmt.Sprintf("%v", v)
+	case int:
+		s = fmt.Sprintf("%d", v)
+	case int32:
+		s = fmt.Sprintf("%d", v)
+	case int64:
+		s = fmt.Sprintf("%d", v)
+	case float32:
+		s = fmt.Sprintf("%d", int(v))
+	case float64:
+		s = fmt.Sprintf("%d", int(v))
 	default:
-		// string / other type; quote it
-		s = fmt.Sprintf("%q", s)
+		s = fmt.Sprintf("%q", fmt.Sprintf("%v", a))
 	}
 	return
 }
