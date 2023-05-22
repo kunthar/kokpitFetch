@@ -13,6 +13,25 @@ import (
 	"time"
 )
 
+func main() {
+	c := client.From(client.NewHTTPClient())
+	wg := sync.WaitGroup{}
+	// cb ve mv icin ic / dis fetch paralel baslat
+	for _, isCB := range []bool{false, true} {
+		wg.Add(1)
+		go icSandik(c, &wg, isCB)
+		wg.Add(1)
+		go disTemsSandik(c, &wg, isCB)
+	}
+	// tum goroutine'leri bekle
+	wg.Wait()
+	fmt.Println("DONE.")
+}
+
+// region utils
+
+// turOrd sonuc turune gore siralamak icin order index verir
+// (once ittifak, sonra parti, sonra bagimsiz sonuclar)
 func turOrd(n string) int {
 	if strings.HasPrefix(n, "ittifak") {
 		return -2
@@ -22,12 +41,14 @@ func turOrd(n string) int {
 	return 0
 }
 
+// hata alirsak dogrudan programi kapatalim diye tembellik util'i
 func must(_ int, err error) {
 	if err != nil {
 		log.Fatalf("cannot write to file: %v", err)
 	}
 }
 
+// 8 = cumhurbaskanligi secimi, 9 = parlamento secimi
 func secimTurID(isCB bool) int {
 	if isCB {
 		return 9
@@ -35,22 +56,55 @@ func secimTurID(isCB bool) int {
 	return 8
 }
 
-func main() {
-	c := client.From(client.NewHTTPClient())
-	wg := sync.WaitGroup{}
-	for _, isCB := range []bool{false, true} {
-		wg.Add(1)
-		go icSandik(c, &wg, isCB)
-		wg.Add(1)
-		go disTemsSandik(c, &wg, isCB)
-	}
-	wg.Wait()
-	fmt.Println("DONE.")
-}
-
+// timestamp'ler icin sabit konum: Europe/Istanbul (UTC+3)
+// makinenin saati bozuk oldugu icin bunu enforce etmek gerekli
 var loc = time.FixedZone("UTC+3", 3*60*60)
 
-//goland:noinspection GoBoolExpressions
+// ilgili csv dosyasini olustur, defer edilecek fonksiyonla beraber don
+func openFile(title string, isCB bool) (io.Writer, func()) {
+	prefix := "MV"
+	if isCB {
+		prefix = "CB"
+	}
+	// ornek: sandiklarCB-14-05-2023-23-04.csv
+	fn := fmt.Sprintf("%s%s-%s.csv", title, prefix,
+		time.Now().In(loc).Format("02-01-2006-15-04"))
+	w, err := os.Create(fn)
+	if err != nil {
+		log.Fatalf("cannot open file: %v\n", err)
+	}
+	// dosya adini yazdir
+	fmt.Printf("[%s] FILE: %s\n", prefix, fn)
+	return w, func() {
+		// close fonksiyonu
+		if er := w.Close(); er != nil {
+			log.Printf("cannot close file: %v\n", err)
+		}
+	}
+}
+
+// go'nun gerizekaliliklari: interface'ten integer'a
+func convInt(a any) int {
+	switch v := a.(type) {
+	case int:
+		return v
+	case int32:
+		return int(v)
+	case int64:
+		return int(v)
+	case float32:
+		return int(v)
+	case float64:
+		return int(v)
+	default:
+		// alakasiz veri
+		log.Fatalf("wtf %T %v", a, a)
+		return 0
+	}
+}
+
+// endregion utils
+
 func disTemsSandik(c client.Client, wg *sync.WaitGroup, isCB bool) {
 	defer wg.Done()
 
@@ -105,10 +159,8 @@ func disTemsSandik(c client.Client, wg *sync.WaitGroup, isCB bool) {
 
 		}
 	}
-
 }
 
-//goland:noinspection GoBoolExpressions
 func icSandik(c client.Client, wg *sync.WaitGroup, isCB bool) {
 	defer wg.Done()
 
@@ -192,42 +244,5 @@ func icSandik(c client.Client, wg *sync.WaitGroup, isCB bool) {
 				must(fmt.Fprintln(w))
 			}
 		}
-	}
-}
-
-func openFile(title string, isCB bool) (io.Writer, func()) {
-	prefix := "MV"
-	if isCB {
-		prefix = "CB"
-	}
-	fn := fmt.Sprintf("%s%s-%s.csv", title, prefix,
-		time.Now().In(loc).Format("02-01-2006-15-04"))
-	w, err := os.Create(fn)
-	if err != nil {
-		log.Fatalf("cannot open file: %v\n", err)
-	}
-	fmt.Printf("[%s] FILE: %s\n", prefix, fn)
-	return w, func() {
-		if er := w.Close(); er != nil {
-			log.Printf("cannot close file: %v\n", err)
-		}
-	}
-}
-
-func convInt(a any) int {
-	switch v := a.(type) {
-	case int:
-		return v
-	case int32:
-		return int(v)
-	case int64:
-		return int(v)
-	case float32:
-		return int(v)
-	case float64:
-		return int(v)
-	default:
-		log.Fatalf("wtf %T %v", a, a)
-		return 0
 	}
 }
