@@ -18,6 +18,14 @@ import (
 func main() {
 	c := client.From(client.NewHTTPClient())
 	wg := sync.WaitGroup{}
+	// klasorleri olustur
+	if err := os.MkdirAll("cache/", 0o777); err != nil {
+		log.Fatalf("Onbellek dizini olusturulamiyor! (cache/)")
+	} else if err = os.MkdirAll("output/", 0o777); err != nil {
+		log.Fatalf("Cikti dizini olusturulamiyor! (output/)")
+	} else if err = os.MkdirAll("temp/", 0o777); err != nil {
+		log.Fatalf("Temp dizini olusturulamiyor! (temp/)")
+	}
 	// cb ve mv icin ic / dis fetch paralel baslat
 	for _, isCB := range []bool{false, true} {
 		wg.Add(1)
@@ -55,19 +63,16 @@ func secimTurID(isCB bool) int {
 // makinenin saati bozuk oldugu icin bunu enforce etmek gerekli
 var loc = time.FixedZone("UTC+3", 3*60*60)
 
-func filename(title, suffix string, isCB bool) string {
+// ilgili csv dosyasini olustur, defer edilecek fonksiyonla beraber don
+func openFile(title string, isCB bool) (io.Writer, func()) {
 	prefix := "MV"
 	if isCB {
 		prefix = "CB"
 	}
-	// ornek: sandiklarCB-14-05-2023-23-04.csv
-	return fmt.Sprintf("%s%s-%s.%s", title, prefix,
-		time.Now().In(loc).Format("02-01-2006-15-04"), suffix)
-}
-
-// ilgili csv dosyasini olustur, defer edilecek fonksiyonla beraber don
-func openFile(title string, isCB bool) (io.Writer, func()) {
-	fn := filename(title, "csv", isCB)
+	// ornek: temp/sandiklarCB-14-05-2023-23-04.csv
+	tm := time.Now().In(loc).Format("02-01-2006-15-04")
+	fn := fmt.Sprintf("temp/%s%s-%s.csv", title, prefix, tm)
+	lastFn := fmt.Sprintf("output/%s%s-%s.csv", title, prefix, tm)
 	w, err := os.Create(fn)
 	if err != nil {
 		log.Fatalf("cannot open file: %v\n", err)
@@ -78,6 +83,8 @@ func openFile(title string, isCB bool) (io.Writer, func()) {
 		// close fonksiyonu
 		if er := w.Close(); er != nil {
 			log.Printf("cannot close file: %v\n", err)
+		} else if er = os.Rename(fn, lastFn); er != nil {
+			log.Printf("cannot move file to %s: %v\n", lastFn, err)
 		}
 	}
 }
@@ -195,7 +202,7 @@ type SutunBilgi struct {
 	Names map[string]src.SecimSonucBaslik `json:"names"`
 }
 
-type printCtx struct {
+type PrintCtx struct {
 	ordCols        []src.SecimSonucBaslik
 	skippedColumns map[int]bool
 	i              int
@@ -219,9 +226,9 @@ func (sb *SutunBilgi) addRow(colNames map[string]src.SecimSonucBaslik, sonuc map
 	return m
 }
 
-func (sb *SutunBilgi) FprintHeader(w io.Writer, isSkipColumn func(src.SecimSonucBaslik) bool) *printCtx {
+func (sb *SutunBilgi) FprintHeader(w io.Writer, isSkipColumn func(src.SecimSonucBaslik) bool) *PrintCtx {
 	must(fmt.Fprint(w, "#"))
-	pc := &printCtx{ordCols: toOrdSutunlar(sb.Names), skippedColumns: make(map[int]bool)}
+	pc := &PrintCtx{ordCols: toOrdSutunlar(sb.Names), skippedColumns: make(map[int]bool)}
 	for i, sutun := range pc.ordCols {
 		if isSkipColumn != nil && isSkipColumn(sutun) {
 			pc.skippedColumns[i] = true
@@ -233,7 +240,7 @@ func (sb *SutunBilgi) FprintHeader(w io.Writer, isSkipColumn func(src.SecimSonuc
 	return pc
 }
 
-func (pc *printCtx) FprintRow(w io.Writer, row map[string]any) {
+func (pc *PrintCtx) FprintRow(w io.Writer, row map[string]any) {
 	pc.i++
 	must(fmt.Fprintf(w, "%d", pc.i))
 	for j, sutun := range pc.ordCols {
@@ -270,7 +277,7 @@ func disTemsSandik(c client.Client, wg *sync.WaitGroup, isCB bool) {
 	colNames := colNameBaslikMap(baslikList, true)
 
 	var sb SutunBilgi
-	cacheFilename := fmt.Sprintf("__disTemsSandiklar%d.cache", st)
+	cacheFilename := fmt.Sprintf("cache/__disTemsSandiklar%d.cache", st)
 	if getSutunBilgiFromCache(cacheFilename, &sb) {
 		fmt.Printf("Yurt disi sandik sutun bilgileri onbellekten kullaniliyor (cb=%v) [%s]\n", isCB, memUsage())
 	} else {
@@ -319,7 +326,7 @@ func gumrukSandik(c client.Client, wg *sync.WaitGroup, isCB bool) {
 	colNames := colNameBaslikMap(baslikList, true)
 
 	var sb SutunBilgi
-	cacheFilename := fmt.Sprintf("__gumrukSandiklar%d.cache", st)
+	cacheFilename := fmt.Sprintf("cache/__gumrukSandiklar%d.cache", st)
 	if getSutunBilgiFromCache(cacheFilename, &sb) {
 		fmt.Printf("Gumruk sandik sutun bilgileri onbellekten kullaniliyor (cb=%v) [%s]\n", isCB, memUsage())
 	} else {
@@ -364,7 +371,7 @@ func icSandik(c client.Client, wg *sync.WaitGroup, isCB bool) {
 	}
 
 	var sb SutunBilgi
-	cacheFilename := fmt.Sprintf("__yurticiSandiklar%d.cache", st)
+	cacheFilename := fmt.Sprintf("cache/__yurticiSandiklar%d.cache", st)
 	if getSutunBilgiFromCache(cacheFilename, &sb) {
 		fmt.Printf("Yurt ici sandik sutun bilgileri onbellekten kullaniliyor (cb=%v) [%s]\n", isCB, memUsage())
 	} else {
@@ -421,7 +428,7 @@ func cezaeviSandik(c client.Client, wg *sync.WaitGroup, isCB bool) {
 	}
 
 	var sb SutunBilgi
-	cacheFilename := fmt.Sprintf("__cezaeviSandiklar%d.cache", st)
+	cacheFilename := fmt.Sprintf("cache/__cezaeviSandiklar%d.cache", st)
 	if getSutunBilgiFromCache(cacheFilename, &sb) {
 		fmt.Printf("Cezaevi sandik sutun bilgileri onbellekten kullaniliyor (cb=%v) [%s]\n", isCB, memUsage())
 	} else {
