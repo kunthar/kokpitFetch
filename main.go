@@ -24,6 +24,10 @@ func main() {
 		go icSandik(c, &wg, isCB)
 		wg.Add(1)
 		go disTemsSandik(c, &wg, isCB)
+		wg.Add(1)
+		go cezaeviSandik(c, &wg, isCB)
+		wg.Add(1)
+		go gumrukSandik(c, &wg, isCB)
 	}
 	// tum goroutine'leri bekle
 	wg.Wait()
@@ -188,8 +192,7 @@ func memUsage() string {
 // endregion utils
 
 type SutunBilgi struct {
-	Names     map[string]src.SecimSonucBaslik `json:"names"`
-	HasValues map[string]struct{}             `json:"hasValues"`
+	Names map[string]src.SecimSonucBaslik `json:"names"`
 }
 
 type printCtx struct {
@@ -212,9 +215,6 @@ func (sb *SutunBilgi) addRow(colNames map[string]src.SecimSonucBaslik, sonuc map
 		}
 		// map'e adlarla kaydet; col name ile degil!
 		m[col.Ad] = v
-		if vv := fmt.Sprintf("%v", v); vv != "" && vv != "0" {
-			sb.HasValues[col.Ad] = struct{}{}
-		}
 	}
 	return m
 }
@@ -223,7 +223,7 @@ func (sb *SutunBilgi) FprintHeader(w io.Writer, isSkipColumn func(src.SecimSonuc
 	must(fmt.Fprint(w, "#"))
 	pc := &printCtx{ordCols: toOrdSutunlar(sb.Names), skippedColumns: make(map[int]bool)}
 	for i, sutun := range pc.ordCols {
-		if _, ok := sb.HasValues[sutun.Ad]; !ok || (isSkipColumn != nil && isSkipColumn(sutun)) {
+		if isSkipColumn != nil && isSkipColumn(sutun) {
 			pc.skippedColumns[i] = true
 		} else {
 			must(fmt.Fprintf(w, ",%q", sutun.Ad))
@@ -275,10 +275,7 @@ func disTemsSandik(c client.Client, wg *sync.WaitGroup, isCB bool) {
 		fmt.Printf("Yurt disi sandik sutun bilgileri onbellekten kullaniliyor (cb=%v) [%s]\n", isCB, memUsage())
 	} else {
 		// tek scope; tum adlar unique olmali
-		sb = SutunBilgi{
-			Names:     adBaslikMap(baslikList, true),
-			HasValues: make(map[string]struct{}),
-		}
+		sb = SutunBilgi{Names: adBaslikMap(baslikList, true)}
 		fmt.Printf("Yurt disi sandik basliklari cekildi (cb=%v), %d sutun var [%s]\n",
 			isCB, len(sb.Names), memUsage())
 		for ulkeIdx, ulke := range ulkeler {
@@ -310,19 +307,64 @@ func disTemsSandik(c client.Client, wg *sync.WaitGroup, isCB bool) {
 	fmt.Printf("Yurt disi sandik verileri dosyaya yazildi (cb=%v) [%s].\n", isCB, memUsage())
 }
 
+func gumrukSandik(c client.Client, wg *sync.WaitGroup, isCB bool) {
+	defer wg.Done()
+	st := secimTurID(isCB)
+
+	// basliklari cek
+	gumrukler := src.GumrukListesi(c)
+	fmt.Printf("Gumruk sandik basliklari cekiliyor (cb=%v) [%s]\n", isCB, memUsage())
+	baslikList := src.YurtdisiSecimSonucBaslikListesi(c, st)
+	// tek scope; tum column name'ler unique olmali
+	colNames := colNameBaslikMap(baslikList, true)
+
+	var sb SutunBilgi
+	cacheFilename := fmt.Sprintf("__gumrukSandiklar%d.cache", st)
+	if getSutunBilgiFromCache(cacheFilename, &sb) {
+		fmt.Printf("Gumruk sandik sutun bilgileri onbellekten kullaniliyor (cb=%v) [%s]\n", isCB, memUsage())
+	} else {
+		// tek scope; tum adlar unique olmali
+		sb = SutunBilgi{Names: adBaslikMap(baslikList, true)}
+		fmt.Printf("Gumruk sandik basliklari cekildi (cb=%v), %d sutun var [%s]\n",
+			isCB, len(sb.Names), memUsage())
+		for gumrukIdx, gumruk := range gumrukler {
+			fmt.Printf("Gumruk sandik verileri cekiliyor (cb=%v) (%d / %d gumruk) %s [%s]\n",
+				isCB, gumrukIdx+1, len(gumrukler), gumruk.GumrukADI, memUsage())
+			for _, sonuc := range src.SecimSandikSonucListesi(c, src.GumrukSonucParams(gumruk, st)) {
+				// tum row'lari fetch et
+				sb.addRow(colNames, sonuc)
+			}
+		}
+		cacheSutunBilgi(cacheFilename, &sb)
+	}
+
+	// siralanmis basliklarla print
+	w, closeFile := openFile("gumrukSandiklar", isCB)
+	defer closeFile()
+	pc := sb.FprintHeader(w, skippedColumnsFn(isCB))
+	for gumrukIdx, gumruk := range gumrukler {
+		fmt.Printf("Gumruk sandik verileri yaziliyor (cb=%v) (%d / %d gumruk) %s [%s]\n",
+			isCB, gumrukIdx+1, len(gumrukler), gumruk.GumrukADI, memUsage())
+		for _, sonuc := range src.SecimSandikSonucListesi(c, src.GumrukSonucParams(gumruk, st)) {
+			pc.FprintRow(w, sb.addRow(colNames, sonuc))
+		}
+	}
+	fmt.Printf("Gumruk sandik verileri dosyaya yazildi (cb=%v) [%s].\n", isCB, memUsage())
+}
+
 func icSandik(c client.Client, wg *sync.WaitGroup, isCB bool) {
 	defer wg.Done()
 	st := secimTurID(isCB)
 
 	fmt.Printf("Yurt ici sandik basliklari cekiliyor (cb=%v) [%s]\n", isCB, memUsage())
-	cevreler := src.IlListesi(c, st)
+	cevreler := src.IlListesi(c, st, 0)
 	cevBas := make([][]src.SecimSonucBaslik, 0, len(cevreler))
 	for _, cvr := range cevreler {
 		cevBas = append(cevBas, src.SecimSonucBaslikListesi(c, cvr, st))
 	}
 
 	var sb SutunBilgi
-	cacheFilename := fmt.Sprintf("__disTemsSandiklar%d.cache", st)
+	cacheFilename := fmt.Sprintf("__yurticiSandiklar%d.cache", st)
 	if getSutunBilgiFromCache(cacheFilename, &sb) {
 		fmt.Printf("Yurt ici sandik sutun bilgileri onbellekten kullaniliyor (cb=%v) [%s]\n", isCB, memUsage())
 	} else {
@@ -331,10 +373,7 @@ func icSandik(c client.Client, wg *sync.WaitGroup, isCB bool) {
 		for _, bas := range cevBas {
 			basTmp = append(basTmp, bas...)
 		}
-		sb = SutunBilgi{
-			Names:     adBaslikMap(basTmp, false),
-			HasValues: make(map[string]struct{}),
-		}
+		sb = SutunBilgi{Names: adBaslikMap(basTmp, false)}
 		fmt.Printf("Yurt ici sandik basliklari cekildi (cb=%v), %d sutun var [%s]\n",
 			isCB, len(sb.Names), memUsage())
 
@@ -342,7 +381,7 @@ func icSandik(c client.Client, wg *sync.WaitGroup, isCB bool) {
 			fmt.Printf("Yurt ici sandik verileri cekiliyor (cb=%v) (%d / %d secim cevresi) %s [%s]\n",
 				isCB, cevIdx+1, len(cevreler), cev.IlADI, memUsage())
 			cevColNameBaslikMap := colNameBaslikMap(cevBas[cevIdx], true)
-			for _, ilce := range src.IlceListesi(c, cev, st) {
+			for _, ilce := range src.IlceListesi(c, cev, st, 0) {
 				for _, sonuc := range src.SecimSandikSonucListesi(c, src.IlceSonucParams(ilce, st)) {
 					// her cevrenin sonuclarini kendi column name'leriyle map'le
 					sb.addRow(cevColNameBaslikMap, sonuc)
@@ -360,13 +399,70 @@ func icSandik(c client.Client, wg *sync.WaitGroup, isCB bool) {
 		fmt.Printf("Yurt ici sandik verileri yaziliyor (cb=%v) (%d / %d secim cevresi) %s [%s]\n",
 			isCB, cevIdx+1, len(cevreler), cev.IlADI, memUsage())
 		cevColNameBaslikMap := colNameBaslikMap(cevBas[cevIdx], true)
-		for _, ilce := range src.IlceListesi(c, cev, st) {
+		for _, ilce := range src.IlceListesi(c, cev, st, 0) {
 			for _, sonuc := range src.SecimSandikSonucListesi(c, src.IlceSonucParams(ilce, st)) {
 				pc.FprintRow(w, sb.addRow(cevColNameBaslikMap, sonuc))
 			}
 		}
 	}
 	fmt.Printf("Yurt ici sandik verileri dosyaya yazildi (cb=%v).\n", isCB)
+}
+
+func cezaeviSandik(c client.Client, wg *sync.WaitGroup, isCB bool) {
+	const cezaeviSandikTuru = 2
+	defer wg.Done()
+	st := secimTurID(isCB)
+
+	fmt.Printf("Cezaevi sandik basliklari cekiliyor (cb=%v) [%s]\n", isCB, memUsage())
+	cevreler := src.IlListesi(c, st, cezaeviSandikTuru)
+	cevBas := make([][]src.SecimSonucBaslik, 0, len(cevreler))
+	for _, cvr := range cevreler {
+		cevBas = append(cevBas, src.SecimSonucBaslikListesi(c, cvr, st))
+	}
+
+	var sb SutunBilgi
+	cacheFilename := fmt.Sprintf("__cezaeviSandiklar%d.cache", st)
+	if getSutunBilgiFromCache(cacheFilename, &sb) {
+		fmt.Printf("Cezaevi sandik sutun bilgileri onbellekten kullaniliyor (cb=%v) [%s]\n", isCB, memUsage())
+	} else {
+		// adBaslikMap tum basliklarin union'ını verir; uniq = false olmali
+		var basTmp []src.SecimSonucBaslik
+		for _, bas := range cevBas {
+			basTmp = append(basTmp, bas...)
+		}
+		sb = SutunBilgi{Names: adBaslikMap(basTmp, false)}
+		fmt.Printf("Cezaevi sandik basliklari cekildi (cb=%v), %d sutun var [%s]\n",
+			isCB, len(sb.Names), memUsage())
+
+		for cevIdx, cev := range cevreler {
+			fmt.Printf("Cezaevi sandik verileri cekiliyor (cb=%v) (%d / %d secim cevresi) %s [%s]\n",
+				isCB, cevIdx+1, len(cevreler), cev.IlADI, memUsage())
+			cevColNameBaslikMap := colNameBaslikMap(cevBas[cevIdx], true)
+			for _, ilce := range src.IlceListesi(c, cev, st, cezaeviSandikTuru) {
+				for _, sonuc := range src.SecimSandikSonucListesi(c, src.CezaeviSonucParams(ilce, st)) {
+					// her cevrenin sonuclarini kendi column name'leriyle map'le
+					sb.addRow(cevColNameBaslikMap, sonuc)
+				}
+			}
+		}
+		cacheSutunBilgi(cacheFilename, &sb)
+	}
+
+	// siralanmis basliklarla print
+	w, closeFile := openFile("cezaeviSandiklar", isCB)
+	defer closeFile()
+	pc := sb.FprintHeader(w, skippedColumnsFn(isCB))
+	for cevIdx, cev := range cevreler {
+		fmt.Printf("Cezaevi sandik verileri yaziliyor (cb=%v) (%d / %d secim cevresi) %s [%s]\n",
+			isCB, cevIdx+1, len(cevreler), cev.IlADI, memUsage())
+		cevColNameBaslikMap := colNameBaslikMap(cevBas[cevIdx], true)
+		for _, ilce := range src.IlceListesi(c, cev, st, cezaeviSandikTuru) {
+			for _, sonuc := range src.SecimSandikSonucListesi(c, src.CezaeviSonucParams(ilce, st)) {
+				pc.FprintRow(w, sb.addRow(cevColNameBaslikMap, sonuc))
+			}
+		}
+	}
+	fmt.Printf("Cezaevi sandik verileri dosyaya yazildi (cb=%v).\n", isCB)
 }
 
 func getSutunBilgiFromCache(fn string, sb *SutunBilgi) bool {

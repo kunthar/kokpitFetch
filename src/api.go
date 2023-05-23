@@ -48,9 +48,9 @@ const (
 
 // region IlListesi
 
-func IlListesi(c client.Client, secimTuru int) []Il {
+func IlListesi(c client.Client, secimTuru, sandikTuru int) []Il {
 	return MustGet[[]Il](c, "getIlList", map[string]any{
-		"secimId": secimID, "secimTuru": secimTuru, "sandikTuru": 0, "yurtIciDisi": 1,
+		"secimId": secimID, "secimTuru": secimTuru, "sandikTuru": sandikTuru, "yurtIciDisi": 1,
 	})
 }
 
@@ -74,9 +74,9 @@ type Il struct {
 // endregion
 // region IlceListesi
 
-func IlceListesi(c client.Client, i Il, secimTuru int) []Ilce {
+func IlceListesi(c client.Client, i Il, secimTuru, sandikTuru int) []Ilce {
 	return MustGet[[]Ilce](c, "getIlceList", map[string]any{
-		"secimId": secimID, "secimTuru": secimTuru, "sandikTuru": 0, "yurtIciDisi": 1,
+		"secimId": secimID, "secimTuru": secimTuru, "sandikTuru": sandikTuru, "yurtIciDisi": 1,
 		"ilId": i.IlID, "secimCevresiId": i.SecimCEVRESIID,
 	})
 }
@@ -107,9 +107,9 @@ type Ilce struct {
 // endregion
 // region MuhtarlikListesi
 
-func MuhtarlikListesi(c client.Client, i Ilce, secimTuru int) []Muh {
+func MuhtarlikListesi(c client.Client, i Ilce, secimTuru, sandikTuru int) []Muh {
 	return MustGet[[]Muh](c, "getMuhtarlikList", map[string]any{
-		"secimId": secimID, "secimTuru": secimTuru, "sandikTuru": 0, "yurtIciDisi": 1,
+		"secimId": secimID, "secimTuru": secimTuru, "sandikTuru": sandikTuru, "yurtIciDisi": 1,
 		"ilceId": i.IlceID, "beldeId": i.BeldeID, "birimId": i.BirimID, "secimCevresiId": i.SecimCEVRESIID,
 	})
 }
@@ -271,6 +271,68 @@ type SecimSonuc struct {
 
 // endregion
 // region SecimSandikSonucListesi
+
+func GumrukSonucParams(g Gumruk, secimTuru int) map[string]any {
+	return map[string]any{
+		"secimId": secimID, "secimTuru": secimTuru, "sandikTuru": 1, "yurtIciDisi": 2, "ulkeId": "",
+		"gumrukId": g.GumrukID, "ilId": "", "ilceId": g.IlceID, "beldeId": "", "birimId": "",
+		"muhtarlikId": "", "cezaeviId": "", "sandikNoIlk": "", "sandikNoSon": "", "disTemsilcilikId": "",
+		"sandikRumuzIlk": "", "sandikRumuzSon": "", "secimCevresiId": "", "sandikId": "",
+	}
+}
+
+// https://sspskokpit.ysk.gov.tr/api/ssps/
+//	getSecimSandikSonucList
+//		?secimId=60792
+//		&secimTuru=9
+//		&sandikTuru=1
+//		&yurtIciDisi=2
+//		&ilId=
+//		&ilceId=901
+//		&beldeId=
+//		&birimId=
+//		&muhtarlikId=
+//		&cezaeviId=
+//		&sandikNoIlk=
+//		&sandikNoSon=
+//		&ulkeId=
+//		&disTemsilcilikId=
+//		&gumrukId=7
+//		&sandikRumuzIlk=
+//		&sandikRumuzSon=
+//		&secimCevresiId=
+//		&sandikId=
+
+func CezaeviSonucParams(i Ilce, secimTuru int) map[string]any {
+	return map[string]any{
+		"secimId": secimID, "secimTuru": secimTuru, "sandikTuru": 2, "yurtIciDisi": 1, "ulkeId": "",
+		"disTemsilcilikId": "", "ilId": i.IlID, "ilceId": i.IlceID, "beldeId": i.BeldeID, "birimId": i.BirimID,
+		"muhtarlikId": "", "cezaeviId": "", "sandikNoIlk": "", "sandikNoSon": "", "gumrukId": "",
+		"sandikRumuzIlk": "", "sandikRumuzSon": "", "secimCevresiId": i.SecimCEVRESIID, "sandikId": "",
+	}
+}
+
+// https://sspskokpit.ysk.gov.tr/api/ssps/
+//	getSecimSandikSonucList
+//		?secimId=60792
+//		&secimTuru=8
+//		&sandikTuru=2
+//		&yurtIciDisi=1
+//		&ilId=1
+//		&ilceId=473
+//		&beldeId=0
+//		&birimId=0
+//		&muhtarlikId=
+//		&cezaeviId=
+//		&sandikNoIlk=
+//		&sandikNoSon=
+//		&ulkeId=
+//		&disTemsilcilikId=
+//		&gumrukId=
+//		&sandikRumuzIlk=
+//		&sandikRumuzSon=
+//		&secimCevresiId=404480
+//		&sandikId=
 
 func DisTemsSonucParams(d DisTemsilcilik, secimTuru int) map[string]any {
 	return map[string]any{
